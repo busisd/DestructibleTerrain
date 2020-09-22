@@ -200,7 +200,8 @@ class ContactFireball extends Fireball {
   constructor(xPos, yPos) {
     super(xPos, yPos);
     this.color = 0xFF0000;
-    this.explosionRadius = 40;
+    this.explosionRadius = 35;
+    this.radius = 5;
   }
 
   checkCollision() {
