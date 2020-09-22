@@ -35,7 +35,7 @@ app.stage.addChild(new1);
 
 function circleFor(baseX, baseY, radius, fxn) {
   const radiusSquared = radius ** 2;
-  dataArr = [];
+  let dataArr = [];
 
   for (let curY=baseY-radius; curY<=baseY+radius; curY++) {
     const curWidth = Math.floor(Math.sqrt(radiusSquared - (baseY-curY)**2));
@@ -46,6 +46,11 @@ function circleFor(baseX, baseY, radius, fxn) {
   }
 
   return dataArr;
+}
+
+function explodeAt(x, y, radius) {
+  circleFor(x, y, radius, (curX, curY) => mapContext.clearRect(curX, curY, 1, 1));
+  newTexture.update();
 }
 
 const avgPoint2D = (points) => {
@@ -88,39 +93,55 @@ const pointsToVect = (p1, p2) => (
 
 const fireballGraphics = new PIXI.Graphics();
 app.stage.addChild(fireballGraphics);
-class FireBall {
+class Fireball {
   constructor(xPos, yPos) {
     this.xVelocity = 0;
     this.yVelocity = 0;
     this.x = xPos;
     this.y = yPos;
-    this.radius = 10;
-    this.color = 0xFF0000;
+    this.radius = 7;
+    this.color = 0xAA0000;
     this.alive = true;
+    this.timeAlive = 0;
+    this.explodeTime = 3000;
+    this.bounciness = .6;
+    this.explosionRadius = 50;
   }
   
   remove() {
     fireballList.splice(fireballList.indexOf(this), 1);
   }
 
+  explode() {
+    explodeAt(Math.floor(this.x), Math.floor(this.y), this.explosionRadius);
+  }
+
   accelerate(delta) {
     this.yVelocity += .1 * delta;
   }
 
-  checkCollision() {
+  checkTimeout() {
+    if (this.timeAlive > this.explodeTime) {
+      this.alive = false;
+      this.explode();
+    }
+  }
+
+  checkOutOfBounds() {
     if (this.x < -this.radius || this.x > GAME_WIDTH + this.radius || this.y < -this.radius || this.y > GAME_HEIGHT + this.radius) {
       this.alive = false;
-      return;
     }
+  }
 
+  checkCollision() {
     const data = circleFor(Math.floor(this.x), Math.floor(this.y), this.radius, (x, y, dataArr) => {
       if (mapContext.getImageData(x,y,1,1).data[3] > 0) {
         dataArr.push([x,y]);
       }
     });
 
-    if (dataArr.length > 0) {
-      const collisionPoint = avgPoint2D(dataArr);
+    if (data.length > 0) {
+      const collisionPoint = avgPoint2D(data);
       const bounceVect = pointsToVect(collisionPoint, [this.x, this.y]);
 
       const bounceVectMagnitude = vectMagnitude2D(bounceVect);
@@ -134,13 +155,12 @@ class FireBall {
       const dotProd = dotProd2D([this.xVelocity, this.yVelocity], bounceVectNormalized);
       const multipliedBounceVect = multiplyVect2D(bounceVectNormalized, 2*dotProd);
       const finalVelocity = subtractVect2D([this.xVelocity, this.yVelocity], multipliedBounceVect);
-      const finalVelocityLossOfEnergy = multiplyVect2D(finalVelocity, 0.7);
+      const finalVelocityLossOfEnergy = multiplyVect2D(finalVelocity, this.bounciness);
 
       this.xVelocity = finalVelocityLossOfEnergy[0];
       this.yVelocity = finalVelocityLossOfEnergy[1];
 
       const bounceVectCorrection = multiplyVect2D(bounceVect, 1 - (bounceVectMagnitude/(this.radius+1)));
-      console.log(bounceVectMagnitude, this.radius, 1 - (bounceVectMagnitude/(this.radius+1)));
       this.x += bounceVectCorrection[0];
       this.y += bounceVectCorrection[1];
     }
@@ -157,15 +177,62 @@ class FireBall {
     fireballGraphics.endFill();
   }
 
-  update(delta) {
-    this.accelerate(delta);
-    this.checkCollision();
-    if (this.alive) {
-      this.move(delta);
-      this.draw();
-    } else {
+  update(delta, deltaMS) {
+    this.timeAlive += deltaMS;
+    this.checkOutOfBounds();
+    if (!this.alive) {
       this.remove();
+      return;
     }
+    this.accelerate(delta);
+    this.checkTimeout();
+    if (!this.alive) {
+      this.remove();
+      return;
+    }
+    this.checkCollision();
+    this.move(delta);
+    this.draw();
+  }
+}
+
+class ContactFireball extends Fireball {
+  constructor(xPos, yPos) {
+    super(xPos, yPos);
+    this.color = 0xFF0000;
+    this.explosionRadius = 40;
+  }
+
+  checkCollision() {
+    const data = circleFor(Math.floor(this.x), Math.floor(this.y), this.radius, (x, y, dataArr) => {
+      if (mapContext.getImageData(x,y,1,1).data[3] > 0) {
+        dataArr.push([x,y]);
+      }
+    });
+
+    if (data.length > 0) {
+      this.alive = false;
+    }
+  }
+
+  update(delta) {
+    this.checkOutOfBounds();
+    if (!this.alive) {
+      this.remove();
+      return;
+    }
+
+    this.accelerate(delta);
+
+    this.checkCollision();
+    if (!this.alive) {
+      this.explode();
+      this.remove();
+      return;
+    }
+
+    this.move(delta);
+    this.draw();
   }
 }
 
@@ -173,11 +240,13 @@ app.stage.interactive = true;
 app.stage.on(
   "pointerdown",
   ({data: {button, global: {x, y}}}) => {
-    if (button != 0) {
-      circleFor(x, y, 40, (curX, curY) => mapContext.clearRect(curX, curY, 1, 1));
-      newTexture.update();
-    } else {
-      const newFB = new FireBall(Math.floor(x), Math.floor(y));
+    if (button == 1) {
+      explodeAt(x, y, 40);
+    } else if (button == 0) {
+      const newFB = new Fireball(Math.floor(x), Math.floor(y));
+      fireballList.push(newFB);
+    } else if (button == 2) {
+      const newFB = new ContactFireball(Math.floor(x), Math.floor(y));
       fireballList.push(newFB);
     }
   }
@@ -188,6 +257,6 @@ var fireballList = [];
 app.ticker.add((delta) => {
   fireballGraphics.clear();
   for (curFireball of fireballList) {
-    curFireball.update(delta);
+    curFireball.update(delta, app.ticker.deltaMS);
   }
 });
